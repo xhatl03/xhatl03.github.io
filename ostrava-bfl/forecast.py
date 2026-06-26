@@ -23,11 +23,14 @@ behind the agent egress proxy once the host is allow-listed.
 
 import json
 import os
+import smtplib
 import ssl
 import sys
 import urllib.request
 import urllib.parse
 from datetime import datetime, timedelta, timezone
+from email.mime.text import MIMEText
+from email.utils import formatdate
 
 # ---------------------------------------------------------------- config ----
 LAT, LON = 49.81, 18.28
@@ -293,6 +296,44 @@ def email_body(now, change):
     return "\n".join([s_heat, s_rain, s_wind, s_change, s_rel])
 
 
+# ------------------------------------------------------------ emailing ----
+def maybe_send_email(subject, body):
+    """Send the summary over SMTP if SMTP_* env vars are set (used by the
+    GitHub Action). Returns True if an email was sent, False if not configured.
+
+    Recognised env: SMTP_HOST, SMTP_PORT (default 587), SMTP_USER, SMTP_PASS,
+    MAIL_TO (comma-separated), MAIL_FROM (default SMTP_USER). Port 465 => SSL,
+    otherwise STARTTLS."""
+    host = os.environ.get("SMTP_HOST")
+    mail_to = os.environ.get("MAIL_TO")
+    if not host or not mail_to:
+        return False
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    user = os.environ.get("SMTP_USER")
+    pw = os.environ.get("SMTP_PASS")
+    mail_from = os.environ.get("MAIL_FROM") or user or mail_to
+    recipients = [a.strip() for a in mail_to.split(",") if a.strip()]
+
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = mail_from
+    msg["To"] = ", ".join(recipients)
+    msg["Date"] = formatdate(localtime=True)
+
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=30) as s:
+            if user and pw:
+                s.login(user, pw)
+            s.sendmail(mail_from, recipients, msg.as_string())
+    else:
+        with smtplib.SMTP(host, port, timeout=30) as s:
+            s.starttls(context=ssl.create_default_context())
+            if user and pw:
+                s.login(user, pw)
+            s.sendmail(mail_from, recipients, msg.as_string())
+    return True
+
+
 # ----------------------------------------------------------------- main ----
 def main():
     offline = None
@@ -322,7 +363,17 @@ def main():
         fh.write(body + "\n")
 
     print(body)
-    print("\n---\nfull run saved to", LAST_PATH)
+
+    d = datetime.now()
+    subject = f"Ostrava BFL počasí — {d.day}.{d.month}.{d.year}"
+    try:
+        sent = maybe_send_email(subject, body)
+        print("\n---\nemail:", "sent via SMTP" if sent
+              else "SMTP not configured (set SMTP_HOST/MAIL_TO to send)")
+    except Exception as exc:  # don't lose the run if mail fails
+        print("\n---\nemail: SEND FAILED:", exc, file=sys.stderr)
+
+    print("full run saved to", LAST_PATH)
 
 
 if __name__ == "__main__":

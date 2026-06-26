@@ -1,0 +1,64 @@
+name: Ostrava BFL festival weather
+
+# Twice daily (UTC). Note: scheduled workflows only run from the DEFAULT branch,
+# so this fires once it is on `main`. Use the "Run workflow" button to test from
+# any branch in the meantime.
+on:
+  schedule:
+    - cron: "17 5,17 * * *"   # 05:17 & 17:17 UTC ≈ 07:17 & 19:17 Europe/Prague
+  workflow_dispatch:
+
+concurrency:
+  group: ostrava-bfl-weather
+  cancel-in-progress: false
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Restore the previous run's last.json so the diff (rain shift / cooling)
+      # has something to compare against. Rolling cache: unique save key per run,
+      # restored via the shared prefix.
+      - name: Restore previous state
+        uses: actions/cache/restore@v4
+        with:
+          path: ostrava-bfl/last.json
+          key: ostrava-bfl-state-${{ github.run_id }}
+          restore-keys: |
+            ostrava-bfl-state-
+
+      - name: Run forecast and email
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO || 'hatle.lukas@gmail.com' }}
+        run: python3 ostrava-bfl/forecast.py
+
+      - name: Save updated state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ostrava-bfl/last.json
+          key: ostrava-bfl-state-${{ github.run_id }}
+
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ostrava-bfl-forecast
+          path: |
+            ostrava-bfl/last.json
+            ostrava-bfl/email_body.txt
+          if-no-files-found: ignore
+          retention-days: 14

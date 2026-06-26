@@ -35,7 +35,33 @@ python3 forecast.py                 # live fetch + analyse + diff + email body
 python3 forecast.py --offline=raw.json   # replay a saved ensemble JSON (testing)
 ```
 
-## Twice-daily automation (runbook prompt)
+## Twice-daily automation — GitHub Actions (durable)
+
+`.github/workflows/ostrava-bfl-weather.yml` runs the pipeline every 12 h on a
+GitHub-hosted runner (no egress restrictions, so no Open-Meteo 403) and emails
+the summary over **SMTP**. `last.json` is carried between runs via a rolling
+`actions/cache`, so the run-to-run diff works.
+
+**Two things to do before it works:**
+
+1. **Schedule only fires from the default branch.** Merge this branch into
+   `main`; until then trigger it manually via *Actions → Ostrava BFL festival
+   weather → Run workflow*.
+2. **Add repository secrets** (*Settings → Secrets and variables → Actions*):
+
+   | Secret | Example | Notes |
+   |---|---|---|
+   | `SMTP_HOST` | `smtp.gmail.com` | required |
+   | `SMTP_PORT` | `465` (SSL) or `587` (STARTTLS) | default 587 |
+   | `SMTP_USER` | `hatle.lukas@gmail.com` | required for auth |
+   | `SMTP_PASS` | *app password* | for Gmail use an **App Password**, not your login |
+   | `MAIL_FROM` | `hatle.lukas@gmail.com` | defaults to `SMTP_USER` |
+   | `MAIL_TO` | `hatle.lukas@gmail.com` | defaults to `hatle.lukas@gmail.com` |
+
+   Without `SMTP_HOST`/`MAIL_TO` the run still computes everything and uploads
+   `email_body.txt` as an artifact — it just doesn't send.
+
+## Twice-daily automation (in-session runbook prompt)
 
 Run every 12 h. Each run: execute `python3 ~/ostrava-bfl/forecast.py`; on success
 create a Gmail **draft** to `hatle.lukas@gmail.com` (no send tool is available in
